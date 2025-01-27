@@ -10,18 +10,34 @@ pub struct Card {
     second: u8,
 }
 
-impl OrientedCard {
-    pub fn top(self: &Self) -> u8 {
-        match self.orientation {
-            Orientation::Lower => self.card.first,
-            Orientation::Greater => self.card.second,
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardSet {
+    /// (Start, End), Inclusive
+    Consecutive(u8, u8),
+    /// (Number, Count)
+    Same(u8, u8),
+}
 
-    pub fn bottom(self: &Self) -> u8 {
-        match self.orientation {
-            Orientation::Lower => self.card.second,
-            Orientation::Greater => self.card.first,
+impl PartialOrd for CardSet {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        fn num_cards(card_set: CardSet) -> u8 {
+            match card_set {
+                CardSet::Consecutive(start, end) => end - start + 1,
+                CardSet::Same(_number, count) => count,
+            }
+        }
+
+        if num_cards(*self) != num_cards(*other) {
+            return num_cards(*self).partial_cmp(&num_cards(*other));
+        }
+
+        match (self, other) {
+            (CardSet::Consecutive(s_start, _), CardSet::Consecutive(o_start, _)) => {
+                s_start.partial_cmp(o_start)
+            }
+            (CardSet::Same(s_num, _), CardSet::Same(o_num, _)) => s_num.partial_cmp(o_num),
+            (CardSet::Same(..), CardSet::Consecutive(..)) => Some(std::cmp::Ordering::Greater),
+            (CardSet::Consecutive(..), CardSet::Same(..)) => Some(std::cmp::Ordering::Less),
         }
     }
 }
@@ -67,19 +83,33 @@ fn shuffle_deck(deck: &mut Vec<Card>, seed: u64) -> Vec<OrientedCard> {
         .collect()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Orientation {
     Greater,
     Lower,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct OrientedCard {
     card: Card,
     orientation: Orientation,
 }
 
 impl OrientedCard {
+    pub fn top(self: &Self) -> u8 {
+        match self.orientation {
+            Orientation::Lower => self.card.first,
+            Orientation::Greater => self.card.second,
+        }
+    }
+
+    pub fn bottom(self: &Self) -> u8 {
+        match self.orientation {
+            Orientation::Lower => self.card.second,
+            Orientation::Greater => self.card.first,
+        }
+    }
+
     pub fn flip(&self) -> OrientedCard {
         OrientedCard {
             card: self.card,
@@ -94,16 +124,6 @@ impl OrientedCard {
 
 impl fmt::Display for OrientedCard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let top: u8;
-        let bottom: u8;
-        if self.orientation == Orientation::Greater {
-            top = self.card.first;
-            bottom = self.card.second;
-        } else {
-            top = self.card.second;
-            bottom = self.card.first;
-        }
-
         let to_char = |n: u8| {
             if n == 10 {
                 'T'
@@ -111,7 +131,7 @@ impl fmt::Display for OrientedCard {
                 (n + ('0' as u8)) as char
             }
         };
-        write!(f, "{}({})", to_char(top), to_char(bottom))
+        write!(f, "{}({})", to_char(self.top()), to_char(self.bottom()))
     }
 }
 
@@ -165,12 +185,53 @@ pub enum Action {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TransitionResult {
-    MoveAccepted,
-    IllegalMove,
-    GameComplete,
+pub enum IllegalMoveReason {
+    BadHandIndex,
+    MustChooseOrientation,
+    DoesNotBeatBoard,
+    InvalidSet,
+    NoScoutTokens,
+    ScoutWhenBoardEmpty,
+    TODO,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransitionResult {
+    MoveAccepted,
+    IllegalMove(IllegalMoveReason),
+    GameComplete(u8, u8),
+}
+
+fn build_card_set(to_play: &[OrientedCard]) -> Option<CardSet> {
+    let vals: Vec<u8> = to_play.iter().map(|c| c.top()).collect();
+    if vals.len() == 0 {
+        return None;
+    }
+
+    // Check for set of same numbers
+    if vals.iter().all(|v| *v == vals[0]) {
+        return Some(CardSet::Same(vals[0], vals.len() as u8));
+    }
+
+    // Check for consecutive numbers
+    let ascending = vals[1] > vals[0];
+    if !vals[..vals.len() - 1]
+        .iter()
+        .zip(vals[1..].iter())
+        .all(|(a, b)| if ascending { a < b } else { a > b })
+    {
+        return None;
+    }
+    let first = vals[0];
+    let last = *vals.last().unwrap();
+    if ascending {
+        return Some(CardSet::Consecutive(first, last));
+    } else {
+        return Some(CardSet::Consecutive(last, first));
+    }
+}
+
+/*
 fn build_proposed_board(
     hand: &Vec<OrientedCard>,
     start_idx_u: usize,
@@ -184,7 +245,6 @@ fn build_proposed_board(
     let base = vals[0];
     // Check for set of like numbers
     if vals.iter().all(|v| *v == base) {
-        let mut proposed_board = hand[start_idx_u..end_idx_u].to_vec();
         // The bottom part of the 0 index card should be less than the bottom part of the last card
         if proposed_board[0].bottom() > proposed_board.last().unwrap().bottom() {
             proposed_board.reverse();
@@ -216,6 +276,7 @@ fn build_proposed_board(
         None
     }
 }
+*/
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameCompleteState {
@@ -226,6 +287,10 @@ pub struct GameCompleteState {
 
 impl GameCompleteState {
     pub fn new(max_card_num: u8, seed: u64) -> Self {
+        // If max_card_num is too high then u8 could overflow
+        // 40 is an abritrary limit, the game itself plays up to 10
+        debug_assert!(max_card_num < 40);
+
         let mut deck = build_deck(max_card_num);
         let shuffled_deck = shuffle_deck(&mut deck, seed);
 
@@ -283,8 +348,8 @@ impl GameCompleteState {
         } else {
             match *do_flip {
                 FlipHand::DoFlip => {
-                    self.hero_hidden_state.hand = self
-                        .hero_hidden_state
+                    self.villian_hidden_state.hand = self
+                        .villian_hidden_state
                         .hand
                         .iter()
                         .map(|c| c.flip())
@@ -298,35 +363,64 @@ impl GameCompleteState {
         TransitionResult::MoveAccepted
     }
 
-    fn handle_play_card_action(self: &mut Self, start_idx: &u8, end_idx: &u8) -> TransitionResult {
-        if start_idx >= end_idx {
-            return TransitionResult::IllegalMove;
+    fn legal_and_beats_board(&self, proposed_play: &[OrientedCard]) -> Option<TransitionResult> {
+        match (
+            build_card_set(proposed_play),
+            build_card_set(&self.public_state.board),
+        ) {
+            (Some(card_set), Some(board_set)) => {
+                if card_set > board_set {
+                    None
+                } else {
+                    println!(
+                        "Card set {:?} does not beat board set {:?}",
+                        card_set, board_set
+                    );
+                    Some(TransitionResult::IllegalMove(
+                        IllegalMoveReason::DoesNotBeatBoard,
+                    ))
+                }
+            }
+            (Some(_), None) => None,
+            _ => Some(TransitionResult::IllegalMove(IllegalMoveReason::InvalidSet)),
         }
+    }
 
+    fn handle_play_card_action(self: &mut Self, start_idx: &u8, end_idx: &u8) -> TransitionResult {
+        if !self.public_state.orientation_chosen {
+            return TransitionResult::IllegalMove(IllegalMoveReason::MustChooseOrientation);
+        }
+        if start_idx >= end_idx {
+            return TransitionResult::IllegalMove(IllegalMoveReason::BadHandIndex);
+        }
         let start_idx_u = *start_idx as usize;
         let end_idx_u = *end_idx as usize;
-
+        let hand;
         if self.public_state.is_hero_turn {
-            if end_idx_u > self.hero_hidden_state.hand.len() {
-                return TransitionResult::IllegalMove;
-            }
-            let hand = &self.hero_hidden_state.hand;
-            let proposed_board = build_proposed_board(hand, start_idx_u, end_idx_u);
-            match proposed_board {
-                None => {
-                    return TransitionResult::IllegalMove;
-                }
-                Some(proposed_board) => {
-                    self.public_state.board = proposed_board;
-                }
-            }
+            hand = &self.hero_hidden_state.hand;
         } else {
-            if end_idx_u > self.villian_hidden_state.hand.len() {
-                return TransitionResult::IllegalMove;
-            } 
+            hand = &self.villian_hidden_state.hand;
         }
-        // Handle the action
-        self.public_state.is_hero_turn = !self.public_state.is_hero_turn;
+        if end_idx_u > hand.len() {
+            return TransitionResult::IllegalMove(IllegalMoveReason::BadHandIndex);
+        }
+
+        let proposed_play = &hand[start_idx_u..end_idx_u];
+        if let Some(illegal_move) = self.legal_and_beats_board(proposed_play) {
+            return illegal_move;
+        }
+
+        self.public_state.board = proposed_play.to_vec();
+        if self.public_state.is_hero_turn {
+            self.public_state.hero_card_count -= proposed_play.len() as u8;
+            self.hero_hidden_state.hand.drain(start_idx_u..end_idx_u);
+            self.public_state.is_hero_turn = false;
+        } else {
+            self.public_state.villian_card_count -= proposed_play.len() as u8;
+            self.villian_hidden_state.hand.drain(start_idx_u..end_idx_u);
+            self.public_state.is_hero_turn = true;
+        }
+
         TransitionResult::MoveAccepted
     }
 
@@ -334,18 +428,58 @@ impl GameCompleteState {
         self: &mut Self,
         picked_card_info: &(PickedCard, u8, Orientation),
     ) -> TransitionResult {
+        if !self.public_state.orientation_chosen {
+            return TransitionResult::IllegalMove(IllegalMoveReason::MustChooseOrientation);
+        }
         let picked_card = &picked_card_info.0;
         let insertion_index = picked_card_info.1;
         let orientation = &picked_card_info.2;
 
+        let hand;
         if self.public_state.is_hero_turn {
             if self.public_state.hero_scout_token_count == 0 {
-                return TransitionResult::IllegalMove;
+                return TransitionResult::IllegalMove(IllegalMoveReason::NoScoutTokens);
             }
-            // TODO check board
-            // TODO check index
+            hand = &mut self.hero_hidden_state.hand;
+        } else {
+            if self.public_state.villian_scout_token_count == 0 {
+                return TransitionResult::IllegalMove(IllegalMoveReason::NoScoutTokens);
+            }
+            hand = &mut self.villian_hidden_state.hand;
         }
-        // Handle the action
+
+        if insertion_index as usize > hand.len() {
+            return TransitionResult::IllegalMove(IllegalMoveReason::BadHandIndex);
+        } else if self.public_state.board.len() == 0 {
+            return TransitionResult::IllegalMove(IllegalMoveReason::ScoutWhenBoardEmpty);
+        }
+
+        let oriented_card;
+        match picked_card {
+            PickedCard::FirstCard => {
+                // remove first element of board
+                oriented_card = self.public_state.board.remove(0);
+            }
+            PickedCard::LastCard => {
+                oriented_card = self.public_state.board.pop().unwrap();
+            }
+        }
+
+        hand.insert(
+            insertion_index as usize,
+            OrientedCard {
+                card: oriented_card.card,
+                orientation: *orientation,
+            },
+        );
+        if self.public_state.is_hero_turn {
+            self.public_state.hero_scout_token_count -= 1;
+            self.public_state.hero_card_count += 1;
+        } else {
+            self.public_state.villian_scout_token_count -= 1;
+            self.public_state.villian_card_count += 1;
+        }
+
         TransitionResult::MoveAccepted
     }
 
@@ -378,13 +512,34 @@ impl GameCompleteState {
             println!("Villian's turn");
         }
 
-        print!("Hero's Hand: ");
+        print!(
+            "Hero: [Tokens {:?}] [Hand:",
+            self.public_state.hero_scout_token_count
+        );
         for card in &self.hero_hidden_state.hand {
-            print!(" {} ", card);
+            if card != self.hero_hidden_state.hand.last().unwrap() {
+                print!(" {} ", card);
+            } else {
+                print!(" {}", card);
+            }
         }
-        println!();
-        print!("Villian's Hand: ");
+        println!("]");
+
+        print!(
+            "Villian: [Tokens {:?}] [Hand:",
+            self.public_state.villian_scout_token_count
+        );
         for card in &self.villian_hidden_state.hand {
+            if card != self.villian_hidden_state.hand.last().unwrap() {
+                print!(" {} ", card);
+            } else {
+                print!(" {}", card);
+            }
+        }
+        println!("]");
+
+        print!("Board: ");
+        for card in &self.public_state.board {
             print!(" {} ", card);
         }
         println!();
@@ -401,18 +556,18 @@ mod tests {
             first: 7,
             second: 11,
         };
-        assert_eq!(card.first, 7);
-        assert_eq!(card.second, 11);
+        assert_eq!(7, card.first);
+        assert_eq!(11, card.second);
         assert_eq!(card, card);
     }
 
     #[test]
     fn test_build_deck() {
         let deck = build_deck(4);
-        assert_eq!(deck.len(), 4);
+        assert_eq!(4, deck.len());
 
         let deck = build_deck(10);
-        assert_eq!(deck.len(), 44);
+        assert_eq!(44, deck.len());
     }
 
     #[test]
@@ -424,25 +579,25 @@ mod tests {
 
         shuffle_deck(&mut deck1, 0u64);
         shuffle_deck(&mut deck2, 0u64);
-        assert_eq!(deck1, deck2);
-        assert_ne!(orig, deck1);
+        assert_eq!(deck2, deck1);
+        assert_ne!(deck1, orig);
 
         shuffle_deck(&mut deck3, 1u64);
-        assert_ne!(deck1, deck3);
-        assert_ne!(orig, deck3);
+        assert_ne!(deck3, deck1);
+        assert_ne!(deck3, orig);
     }
 
     #[test]
     fn test_choose_orientation() {
         let mut state = GameCompleteState::new(10, 2);
-        assert_eq!(state.public_state.is_hero_turn, true);
-        assert_eq!(state.public_state.orientation_chosen, false);
+        assert_eq!(true, state.public_state.is_hero_turn);
+        assert_eq!(false, state.public_state.orientation_chosen);
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
-        assert_eq!(state.public_state.is_hero_turn, false);
-        assert_eq!(state.public_state.orientation_chosen, false);
+        assert_eq!(false, state.public_state.is_hero_turn);
+        assert_eq!(false, state.public_state.orientation_chosen);
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
-        assert_eq!(state.public_state.is_hero_turn, true);
-        assert_eq!(state.public_state.orientation_chosen, true);
+        assert_eq!(true, state.public_state.is_hero_turn);
+        assert_eq!(true, state.public_state.orientation_chosen);
     }
     #[test]
     fn test_play_illegal_cards() {
@@ -453,45 +608,243 @@ mod tests {
 
         let cards_per_player = state.public_state.hero_card_count;
 
-        assert_eq!(state.public_state.is_hero_turn, true);
+        assert_eq!(true, state.public_state.is_hero_turn);
 
         let result = state.transition(&Action::PlayCards(0, 3));
-        assert_eq!(result, TransitionResult::IllegalMove);
-        assert_eq!(state.public_state.is_hero_turn, true);
+        assert!(matches!(result, TransitionResult::IllegalMove(_)));
+        assert_eq!(true, state.public_state.is_hero_turn);
 
         let result = state.transition(&Action::PlayCards(100, 0));
-        assert_eq!(result, TransitionResult::IllegalMove);
-        assert_eq!(state.public_state.is_hero_turn, true);
+        assert!(matches!(result, TransitionResult::IllegalMove(_)));
+        assert_eq!(true, state.public_state.is_hero_turn);
 
         let result = state.transition(&Action::PlayCards(1, 1));
-        assert_eq!(result, TransitionResult::IllegalMove);
-        assert_eq!(state.public_state.is_hero_turn, true);
+        assert!(matches!(result, TransitionResult::IllegalMove(_)));
+        assert_eq!(true, state.public_state.is_hero_turn);
 
         let result = state.transition(&Action::PlayCards(1, 0));
-        assert_eq!(result, TransitionResult::IllegalMove);
-        assert_eq!(state.public_state.is_hero_turn, true);
+        assert!(matches!(result, TransitionResult::IllegalMove(_)));
+        assert_eq!(true, state.public_state.is_hero_turn);
 
         let result = state.transition(&Action::PlayCards(cards_per_player, cards_per_player + 1));
-        assert_eq!(result, TransitionResult::IllegalMove);
-        assert_eq!(state.public_state.is_hero_turn, true);
+        assert!(matches!(result, TransitionResult::IllegalMove(_)));
+        assert_eq!(true, state.public_state.is_hero_turn);
     }
 
     #[test]
     fn test_play_same_pair() {
-        let mut start_state = GameCompleteState::new(10, 2);
-        start_state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
-        start_state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
-        start_state.display();
+        let mut state = GameCompleteState::new(10, 2);
+        state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
+        state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
+        state.display();
 
-        let mut state = start_state.clone();
-
-        let mut played = state.hero_hidden_state.hand[0..2].to_vec();
+        let played = state.hero_hidden_state.hand[0..2].to_vec();
         let result = state.transition(&Action::PlayCards(0, 2));
-        // Reverse it because the board should be lowest to highest
-        played.reverse();
 
-        assert_eq!(result, TransitionResult::MoveAccepted);
-        assert_eq!(state.public_state.is_hero_turn, false);
-        assert_eq!(state.public_state.board, played);
+        assert_eq!(TransitionResult::MoveAccepted, result);
+        assert_eq!(false, state.public_state.is_hero_turn);
+        assert_eq!(played, state.public_state.board);
+    }
+
+    #[test]
+    fn test_play_single() {
+        let mut state = GameCompleteState::new(10, 2);
+        state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
+        state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
+        state.display();
+
+        let played = state.hero_hidden_state.hand[0..1].to_vec();
+        let result = state.transition(&Action::PlayCards(0, 1));
+        assert_eq!(TransitionResult::MoveAccepted, result);
+        assert_eq!(false, state.public_state.is_hero_turn);
+        assert_eq!(played, state.public_state.board);
+    }
+
+    #[test]
+    fn test_compare_sets() {
+        let set1 = CardSet::Consecutive(1, 3);
+        let set2 = CardSet::Consecutive(1, 4);
+        assert!(set1 < set2);
+
+        let set1 = CardSet::Consecutive(1, 3);
+        let set2 = CardSet::Consecutive(1, 3);
+        assert!(set1 == set2);
+
+        let set1 = CardSet::Consecutive(1, 3);
+        let set2 = CardSet::Consecutive(1, 2);
+        assert!(set1 > set2);
+
+        let set1 = CardSet::Same(3, 1);
+        let set2 = CardSet::Same(3, 2);
+        assert!(set1 < set2);
+
+        let set1 = CardSet::Same(3, 1);
+        let set2 = CardSet::Same(3, 1);
+        assert!(set1 == set2);
+
+        let set1 = CardSet::Same(3, 2);
+        let set2 = CardSet::Same(3, 1);
+        assert!(set1 > set2);
+    }
+
+    #[test]
+    fn test_both_players_act() {
+        let mut state = GameCompleteState::new(10, 2);
+        state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
+        state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
+        state.display();
+        println!();
+        assert_eq!(2, state.hero_hidden_state.hand[0].top());
+
+        // Hero plays a 2
+        let played = state.hero_hidden_state.hand[0..1].to_vec();
+        let result = state.transition(&Action::PlayCards(0, 1));
+        state.display();
+        println!();
+        assert_eq!(TransitionResult::MoveAccepted, result);
+        assert_eq!(false, state.public_state.is_hero_turn);
+        assert_eq!(played, state.public_state.board);
+
+        // Villian plays a 6
+        let played = state.villian_hidden_state.hand[0..1].to_vec();
+        let result = state.transition(&Action::PlayCards(0, 1));
+        state.display();
+        println!();
+        assert_eq!(TransitionResult::MoveAccepted, result);
+        assert_eq!(true, state.public_state.is_hero_turn);
+        assert_eq!(played, state.public_state.board);
+    }
+
+    #[test]
+    fn test_oriented() {
+        let oc = OrientedCard {
+            card: Card {
+                first: 1,
+                second: 2,
+            },
+            orientation: Orientation::Greater,
+        };
+
+        assert_eq!(2, oc.top());
+        assert_eq!(1, oc.bottom());
+
+        let flipped = oc.flip();
+        assert_eq!(1, flipped.top());
+        assert_eq!(2, flipped.bottom());
+    }
+
+    #[test]
+    fn test_build_card_set() {
+        let oc1 = OrientedCard {
+            card: Card {
+                first: 1,
+                second: 2,
+            },
+            orientation: Orientation::Greater,
+        };
+        let card_set1 = build_card_set(&vec![oc1]);
+        assert_eq!(Some(CardSet::Same(2, 1)), card_set1);
+
+        let oc2 = OrientedCard {
+            card: Card {
+                first: 3,
+                second: 4,
+            },
+            orientation: Orientation::Lower,
+        };
+        let card_set2 = build_card_set(&vec![oc2]);
+        assert_eq!(Some(CardSet::Same(3, 1)), card_set2);
+
+        let card_set3 = build_card_set(&vec![oc1, oc2]);
+        assert_eq!(Some(CardSet::Consecutive(2, 3)), card_set3);
+
+        assert!(card_set2 > card_set1);
+        assert!(card_set3 > card_set2);
+        assert!(card_set3 > card_set1);
+    }
+
+    #[test]
+    fn test_no_orient() {
+        let mut state = GameCompleteState::new(10, 2);
+        let result = state.transition(&Action::PlayCards(0, 1));
+        assert_eq!(
+            TransitionResult::IllegalMove(IllegalMoveReason::MustChooseOrientation),
+            result
+        );
+        let result = state.transition(&Action::PlayScoutToken((
+            PickedCard::FirstCard,
+            0,
+            Orientation::Greater,
+        )));
+        assert_eq!(
+            TransitionResult::IllegalMove(IllegalMoveReason::MustChooseOrientation),
+            result
+        );
+        state.display();
+        println!();
+    }
+
+    #[test]
+    fn test_scout() {
+        let mut state = GameCompleteState::new(10, 2);
+        state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
+        state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
+        state.display();
+        println!();
+
+        let result = state.transition(&Action::PlayCards(0, 1));
+        assert_eq!(TransitionResult::MoveAccepted, result);
+        assert_eq!(2, state.public_state.board[0].top());
+
+        let result = state.transition(&Action::PlayScoutToken((
+            PickedCard::FirstCard,
+            0u8,
+            Orientation::Greater,
+        )));
+        assert_eq!(TransitionResult::MoveAccepted, result);
+        assert_eq!(0, state.public_state.board.len());
+        assert_eq!(12, state.public_state.villian_card_count);
+        assert_eq!(8, state.villian_hidden_state.hand[0].top());
+    }
+    #[test]
+    fn test_bad_scout() {
+        let mut state = GameCompleteState::new(10, 2);
+        state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
+        state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
+        state.display();
+        println!();
+
+        let result = state.transition(&Action::PlayScoutToken((
+            PickedCard::FirstCard,
+            0u8,
+            Orientation::Greater,
+        )));
+        assert_eq!(
+            TransitionResult::IllegalMove(IllegalMoveReason::ScoutWhenBoardEmpty),
+            result
+        );
+
+        let result = state.transition(&Action::PlayCards(0, 1));
+        let result = state.transition(&Action::PlayScoutToken((
+            PickedCard::FirstCard,
+            0u8,
+            Orientation::Greater,
+        )));
+        assert_eq!(TransitionResult::MoveAccepted, result);
+        let result = state.transition(&Action::PlayScoutToken((
+            PickedCard::FirstCard,
+            0u8,
+            Orientation::Greater,
+        )));
+        assert_eq!(
+            TransitionResult::IllegalMove(IllegalMoveReason::ScoutWhenBoardEmpty),
+            result
+        );
+        let result = state.transition(&Action::PlayCards(0, 1));
+        // Villian's Turn
+        let result = state.transition(&Action::PlayCards(3, 6));
+        state.display();
+
+        assert!(false);
     }
 }
