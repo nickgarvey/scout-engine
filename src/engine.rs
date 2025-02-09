@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, vec};
 
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -167,6 +167,8 @@ pub struct PlayerHiddenState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicState {
+    game_complete: bool,
+
     orientation_chosen: bool,
     is_hero_turn: bool,
     board: Vec<OrientedCard>,
@@ -182,6 +184,8 @@ pub struct PublicState {
 
     hero_scouted_cards: Vec<Card>,
     villian_scouted_cards: Vec<Card>,
+
+    action_history: Vec<(Action, TransitionResult)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,13 +208,13 @@ pub enum Action {
     ChooseOrientation(FlipHand),
     // start index (inclusive), end index (inclusive)
     PlayCards(u8, u8),
-
     // First or last card -> (index, orientation)
     PlayScoutToken((PickedCard, u8, Orientation)),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IllegalMoveReason {
+    GameComplete,
     BadHandIndex,
     MustChooseOrientation,
     DoesNotBeatBoard,
@@ -221,9 +225,12 @@ pub enum IllegalMoveReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransitionResult {
+    // Transition did occur, game state was updated
     MoveAccepted,
-    IllegalMove(IllegalMoveReason),
     GameComplete(i8, i8),
+
+    // Transition did not occur, game state unchanged
+    IllegalMove(IllegalMoveReason),
 }
 
 fn build_card_set(to_play: &[OrientedCard]) -> Option<CardSet> {
@@ -263,6 +270,7 @@ fn build_card_set(to_play: &[OrientedCard]) -> Option<CardSet> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameState {
+    seed: u64,
     public_state: PublicState,
     hero_hidden_state: PlayerHiddenState,
     villian_hidden_state: PlayerHiddenState,
@@ -290,24 +298,27 @@ impl GameState {
         debug_assert_eq!(villian_hidden_state.hand.len(), cards_per_player);
 
         let public_state = PublicState {
+            game_complete: false,
             orientation_chosen: false,
             is_hero_turn: true,
-            // empty Vec
-            board: Vec::new(),
+            board: vec![],
             hero_card_count: cards_per_player as u8,
             villian_card_count: cards_per_player as u8,
 
-            hero_won_cards: Vec::new(),
-            villian_won_cards: Vec::new(),
+            hero_won_cards: vec![],
+            villian_won_cards: vec![],
 
-            hero_scouted_cards: Vec::new(),
-            villian_scouted_cards: Vec::new(),
+            hero_scouted_cards: vec![],
+            villian_scouted_cards: vec![],
 
             hero_scout_token_count: scout_tokens,
             villian_scout_token_count: scout_tokens,
+
+            action_history: vec![],
         };
 
         GameState {
+            seed,
             public_state,
             hero_hidden_state,
             villian_hidden_state,
@@ -366,7 +377,11 @@ impl GameState {
         }
     }
 
-    pub fn legal_and_beats_board(&self, proposed_play: &[OrientedCard]) -> Option<IllegalMoveReason> {
+    /// Illegal set is checked before checking if the proposed play beats the board.
+    pub fn legal_and_beats_board(
+        &self,
+        proposed_play: &[OrientedCard],
+    ) -> Option<IllegalMoveReason> {
         match (
             build_card_set(proposed_play),
             build_card_set(&self.public_state.board),
@@ -383,6 +398,7 @@ impl GameState {
         }
     }
 
+    /// Handles a PlayCards action
     fn handle_play_card_action(self: &mut Self, start_idx: &u8, end_idx: &u8) -> TransitionResult {
         if !self.public_state.orientation_chosen {
             return TransitionResult::IllegalMove(IllegalMoveReason::MustChooseOrientation);
@@ -447,9 +463,10 @@ impl GameState {
             &self.villian_hidden_state.hand
         };
 
-        let board_size = self.public_state.board.len();
-        hand.windows(board_size)
-            .any(|window| self.legal_and_beats_board(window).is_none())
+        (1..=hand.len()).any(|window_size| {
+            hand.windows(window_size)
+                .any(|window| self.legal_and_beats_board(window).is_none())
+        })
     }
 
     fn handle_play_scout_token(
@@ -512,8 +529,12 @@ impl GameState {
     }
 
     pub fn transition(self: &mut Self, action: &Action) -> TransitionResult {
+        if self.public_state.game_complete {
+            return TransitionResult::IllegalMove(IllegalMoveReason::GameComplete);
+        }
+
         // Three choices for the enum
-        return match action {
+        let result = match action {
             Action::ChooseOrientation(do_flip) => self.handle_orientation_action(do_flip),
             Action::PlayCards(start_idx, end_idx) => {
                 self.handle_play_card_action(start_idx, end_idx)
@@ -522,6 +543,23 @@ impl GameState {
                 self.handle_play_scout_token(picked_card_info)
             }
         };
+
+        match result {
+            TransitionResult::GameComplete(..) => {
+                self.public_state.game_complete = true;
+                self.public_state
+                    .action_history
+                    .push((action.clone(), result.clone()));
+            }
+            TransitionResult::MoveAccepted => {
+                self.public_state
+                    .action_history
+                    .push((action.clone(), result.clone()));
+            }
+            _ => {}
+        }
+
+        result
     }
 
     pub fn display(&self) -> () {
@@ -534,11 +572,15 @@ impl GameState {
             return;
         }
 
-        print!("--Turn: ");
-        if self.public_state.is_hero_turn {
-            println!("Hero--");
+        if self.public_state.game_complete {
+            println!("--Game Complete--");
         } else {
-            println!("Villian--");
+            print!("--Turn: ");
+            if self.public_state.is_hero_turn {
+                println!("Hero--");
+            } else {
+                println!("Villian--");
+            }
         }
 
         print!(
@@ -574,6 +616,7 @@ impl GameState {
 impl GameState {
     fn play_and_display(&mut self, action: &Action, ensure_legal: bool) -> TransitionResult {
         let result = self.transition(action);
+        self.display();
         if ensure_legal {
             assert!(
                 !matches!(result, TransitionResult::IllegalMove(..)),
@@ -581,7 +624,6 @@ impl GameState {
                 result
             );
         }
-        self.display();
         result
     }
 }
@@ -912,6 +954,31 @@ mod tests {
         assert_eq!(13, state.public_state.villian_card_count);
     }
     #[test]
+    fn test_illegal_move_reason() {
+        let mut state = GameState::new(10, 3, 3);
+        state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
+        state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
+        state.display();
+
+        // Play a 3 card set
+        state.transition(&Action::PlayCards(4, 7));
+        state.display();
+
+        // Play an illegal 2 card set
+        // This certainly can't beat the board, but we want to make sure
+        // InvalidSet is returned not DoesNotBeatBoard
+        let result = state.transition(&Action::PlayCards(0, 2));
+        match result {
+            TransitionResult::IllegalMove(reason) => {
+                assert_eq!(IllegalMoveReason::InvalidSet, reason);
+            }
+            _ => {
+                assert!(false);
+            }
+        }
+    }
+
+    #[test]
     fn test_won_cards() {
         let mut state = GameState::new(10, 3, 3);
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
@@ -1056,5 +1123,32 @@ mod tests {
         // Hero: 1 won card + 2 tokens
         // Villian: 1 won card - 1 card in hand + 3 tokens
         assert_eq!(TransitionResult::GameComplete(4, 11), result);
+    }
+
+    #[test]
+    fn test_cant_play_past_end() {
+        let mut state = GameState::new(6, 0, 5);
+        state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
+        state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
+        state.display();
+
+        state.play_and_display(&Action::PlayCards(2, 3), true);
+        state.play_and_display(&Action::PlayCards(1, 2), true);
+        assert!(!state.public_state.game_complete);
+
+        // Assert result is game end
+        let result = state.play_and_display(&Action::PlayCards(0, 2), true);
+        assert!(matches!(result, TransitionResult::GameComplete(_, _)));
+        assert!(state.public_state.game_complete);
+        assert_eq!(5, state.public_state.action_history.len());
+
+        let result = state.play_and_display(&Action::PlayCards(0, 2), false);
+        assert!(matches!(result, TransitionResult::IllegalMove(..)));
+        assert!(state.public_state.game_complete);
+        assert!(matches!(
+            state.public_state.action_history.last().unwrap().1,
+            TransitionResult::GameComplete(_, _)
+        ));
+        assert_eq!(5, state.public_state.action_history.len());
     }
 }
