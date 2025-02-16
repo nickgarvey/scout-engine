@@ -162,30 +162,30 @@ impl fmt::Display for OrientedCard {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerHiddenState {
-    hand: Vec<OrientedCard>,
+    pub hand: Vec<OrientedCard>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicState {
-    game_complete: bool,
+    pub game_complete: bool,
+    pub orientation_chosen: bool,
+    pub is_player_one_turn: bool,
 
-    orientation_chosen: bool,
-    is_hero_turn: bool,
-    board: Vec<OrientedCard>,
+    pub board: Vec<OrientedCard>,
 
-    hero_card_count: u8,
-    villian_card_count: u8,
+    pub player_one_card_count: u8,
+    pub player_two_card_count: u8,
 
-    hero_scout_token_count: u8,
-    villian_scout_token_count: u8,
+    pub player_one_scout_token_count: u8,
+    pub player_two_scout_token_count: u8,
 
-    hero_won_cards: Vec<Card>,
-    villian_won_cards: Vec<Card>,
+    pub player_one_won_cards: Vec<Card>,
+    pub player_two_won_cards: Vec<Card>,
 
-    hero_scouted_cards: Vec<Card>,
-    villian_scouted_cards: Vec<Card>,
+    pub player_one_scouted_cards: Vec<Card>,
+    pub player_two_scouted_cards: Vec<Card>,
 
-    action_history: Vec<(Action, TransitionResult)>,
+    pub action_history: Vec<(bool, Action, TransitionResult)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -267,13 +267,30 @@ fn build_card_set(to_play: &[OrientedCard]) -> Option<CardSet> {
         return Some(CardSet::Consecutive(last, first));
     }
 }
+/// Illegal set is checked before checking if the proposed play beats the board.
+pub fn legal_and_beats_board(
+    board: &[OrientedCard],
+    proposed_play: &[OrientedCard],
+) -> Option<IllegalMoveReason> {
+    match (build_card_set(proposed_play), build_card_set(board)) {
+        (Some(card_set), Some(board_set)) => {
+            if card_set > board_set {
+                None
+            } else {
+                Some(IllegalMoveReason::DoesNotBeatBoard)
+            }
+        }
+        (Some(_), None) => None,
+        _ => Some(IllegalMoveReason::InvalidSet),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameState {
     seed: u64,
-    public_state: PublicState,
-    hero_hidden_state: PlayerHiddenState,
-    villian_hidden_state: PlayerHiddenState,
+    pub public_state: PublicState,
+    pub player_one_hidden_state: PlayerHiddenState,
+    pub player_two_hidden_state: PlayerHiddenState,
 }
 
 impl GameState {
@@ -287,32 +304,32 @@ impl GameState {
 
         let cards_per_player = deck.len() / 4;
 
-        let hero_hidden_state = PlayerHiddenState {
+        let player_one_hidden_state = PlayerHiddenState {
             hand: shuffled_deck[0..cards_per_player].to_vec(),
         };
-        let villian_hidden_state = PlayerHiddenState {
+        let player_two_hidden_state = PlayerHiddenState {
             hand: shuffled_deck[cards_per_player..cards_per_player * 2].to_vec(),
         };
 
-        debug_assert_eq!(hero_hidden_state.hand.len(), cards_per_player);
-        debug_assert_eq!(villian_hidden_state.hand.len(), cards_per_player);
+        debug_assert_eq!(player_one_hidden_state.hand.len(), cards_per_player);
+        debug_assert_eq!(player_two_hidden_state.hand.len(), cards_per_player);
 
         let public_state = PublicState {
             game_complete: false,
             orientation_chosen: false,
-            is_hero_turn: true,
+            is_player_one_turn: true,
             board: vec![],
-            hero_card_count: cards_per_player as u8,
-            villian_card_count: cards_per_player as u8,
+            player_one_card_count: cards_per_player as u8,
+            player_two_card_count: cards_per_player as u8,
 
-            hero_won_cards: vec![],
-            villian_won_cards: vec![],
+            player_one_won_cards: vec![],
+            player_two_won_cards: vec![],
 
-            hero_scouted_cards: vec![],
-            villian_scouted_cards: vec![],
+            player_one_scouted_cards: vec![],
+            player_two_scouted_cards: vec![],
 
-            hero_scout_token_count: scout_tokens,
-            villian_scout_token_count: scout_tokens,
+            player_one_scout_token_count: scout_tokens,
+            player_two_scout_token_count: scout_tokens,
 
             action_history: vec![],
         };
@@ -320,17 +337,17 @@ impl GameState {
         GameState {
             seed,
             public_state,
-            hero_hidden_state,
-            villian_hidden_state,
+            player_one_hidden_state,
+            player_two_hidden_state,
         }
     }
 
     fn handle_orientation_action(&mut self, do_flip: &FlipHand) -> TransitionResult {
-        if self.public_state.is_hero_turn {
+        if self.public_state.is_player_one_turn {
             match *do_flip {
                 FlipHand::DoFlip => {
-                    self.hero_hidden_state.hand = self
-                        .hero_hidden_state
+                    self.player_one_hidden_state.hand = self
+                        .player_one_hidden_state
                         .hand
                         .iter()
                         .map(|c| c.flip())
@@ -338,12 +355,12 @@ impl GameState {
                 }
                 FlipHand::DoNotFlip => {}
             }
-            self.public_state.is_hero_turn = false;
+            self.public_state.is_player_one_turn = false;
         } else {
             match *do_flip {
                 FlipHand::DoFlip => {
-                    self.villian_hidden_state.hand = self
-                        .villian_hidden_state
+                    self.player_two_hidden_state.hand = self
+                        .player_two_hidden_state
                         .hand
                         .iter()
                         .map(|c| c.flip())
@@ -351,50 +368,29 @@ impl GameState {
                 }
                 FlipHand::DoNotFlip => {}
             }
-            self.public_state.is_hero_turn = true;
+            self.public_state.is_player_one_turn = true;
             self.public_state.orientation_chosen = true;
         }
         TransitionResult::MoveAccepted
     }
 
-    fn build_game_complete(&self, hero_scores: bool) -> TransitionResult {
-        if hero_scores {
+    fn build_game_complete(&self, player_one_scores: bool) -> TransitionResult {
+        if player_one_scores {
             TransitionResult::GameComplete(
-                self.public_state.hero_won_cards.len() as i8
-                    + self.public_state.hero_scout_token_count as i8,
-                self.public_state.villian_won_cards.len() as i8
-                    - self.public_state.villian_card_count as i8
-                    + self.public_state.villian_scout_token_count as i8,
+                self.public_state.player_one_won_cards.len() as i8
+                    + self.public_state.player_one_scout_token_count as i8,
+                self.public_state.player_two_won_cards.len() as i8
+                    - self.public_state.player_two_card_count as i8
+                    + self.public_state.player_two_scout_token_count as i8,
             )
         } else {
             TransitionResult::GameComplete(
-                self.public_state.hero_won_cards.len() as i8
-                    - self.public_state.hero_card_count as i8
-                    + self.public_state.hero_scout_token_count as i8,
-                self.public_state.villian_won_cards.len() as i8
-                    + self.public_state.villian_scout_token_count as i8,
+                self.public_state.player_one_won_cards.len() as i8
+                    - self.public_state.player_one_card_count as i8
+                    + self.public_state.player_one_scout_token_count as i8,
+                self.public_state.player_two_won_cards.len() as i8
+                    + self.public_state.player_two_scout_token_count as i8,
             )
-        }
-    }
-
-    /// Illegal set is checked before checking if the proposed play beats the board.
-    pub fn legal_and_beats_board(
-        &self,
-        proposed_play: &[OrientedCard],
-    ) -> Option<IllegalMoveReason> {
-        match (
-            build_card_set(proposed_play),
-            build_card_set(&self.public_state.board),
-        ) {
-            (Some(card_set), Some(board_set)) => {
-                if card_set > board_set {
-                    None
-                } else {
-                    Some(IllegalMoveReason::DoesNotBeatBoard)
-                }
-            }
-            (Some(_), None) => None,
-            _ => Some(IllegalMoveReason::InvalidSet),
         }
     }
 
@@ -409,31 +405,33 @@ impl GameState {
         let start_idx_u = *start_idx as usize;
         let end_idx_u = *end_idx as usize;
         let hand;
-        if self.public_state.is_hero_turn {
-            hand = &self.hero_hidden_state.hand;
+        if self.public_state.is_player_one_turn {
+            hand = &self.player_one_hidden_state.hand;
         } else {
-            hand = &self.villian_hidden_state.hand;
+            hand = &self.player_two_hidden_state.hand;
         }
         if end_idx_u > hand.len() {
             return TransitionResult::IllegalMove(IllegalMoveReason::BadHandIndex);
         }
 
         let proposed_play = &hand[start_idx_u..end_idx_u];
-        if let Some(illegal_move) = self.legal_and_beats_board(proposed_play) {
+        if let Some(illegal_move) = legal_and_beats_board(&self.public_state.board, proposed_play) {
             return TransitionResult::IllegalMove(illegal_move);
         }
 
         let board_cards = self.public_state.board.iter().map(|c| c.card);
 
-        if self.public_state.is_hero_turn {
-            self.public_state.hero_card_count -= proposed_play.len() as u8;
-            self.public_state.hero_won_cards.extend(board_cards);
+        if self.public_state.is_player_one_turn {
+            self.public_state.player_one_card_count -= proposed_play.len() as u8;
+            self.public_state.player_one_won_cards.extend(board_cards);
             self.public_state.board = proposed_play.to_vec();
-            self.hero_hidden_state.hand.drain(start_idx_u..end_idx_u);
-            self.public_state.is_hero_turn = false;
-            if self.public_state.hero_card_count == 0 {
+            self.player_one_hidden_state
+                .hand
+                .drain(start_idx_u..end_idx_u);
+            self.public_state.is_player_one_turn = false;
+            if self.public_state.player_one_card_count == 0 {
                 self.build_game_complete(true)
-            } else if self.public_state.villian_scout_token_count == 0
+            } else if self.public_state.player_two_scout_token_count == 0
                 && !self.has_legal_play(false)
             {
                 self.build_game_complete(true)
@@ -441,14 +439,18 @@ impl GameState {
                 TransitionResult::MoveAccepted
             }
         } else {
-            self.public_state.villian_card_count -= proposed_play.len() as u8;
-            self.public_state.villian_won_cards.extend(board_cards);
+            self.public_state.player_two_card_count -= proposed_play.len() as u8;
+            self.public_state.player_two_won_cards.extend(board_cards);
             self.public_state.board = proposed_play.to_vec();
-            self.villian_hidden_state.hand.drain(start_idx_u..end_idx_u);
-            self.public_state.is_hero_turn = true;
-            if self.public_state.villian_card_count == 0 {
+            self.player_two_hidden_state
+                .hand
+                .drain(start_idx_u..end_idx_u);
+            self.public_state.is_player_one_turn = true;
+            if self.public_state.player_two_card_count == 0 {
                 self.build_game_complete(false)
-            } else if self.public_state.hero_scout_token_count == 0 && !self.has_legal_play(true) {
+            } else if self.public_state.player_one_scout_token_count == 0
+                && !self.has_legal_play(true)
+            {
                 self.build_game_complete(false)
             } else {
                 TransitionResult::MoveAccepted
@@ -456,16 +458,16 @@ impl GameState {
         }
     }
 
-    fn has_legal_play(self: &Self, check_hero: bool) -> bool {
-        let hand = if check_hero {
-            &self.hero_hidden_state.hand
+    fn has_legal_play(self: &Self, check_player_one: bool) -> bool {
+        let hand = if check_player_one {
+            &self.player_one_hidden_state.hand
         } else {
-            &self.villian_hidden_state.hand
+            &self.player_two_hidden_state.hand
         };
 
         (1..=hand.len()).any(|window_size| {
             hand.windows(window_size)
-                .any(|window| self.legal_and_beats_board(window).is_none())
+                .any(|window| legal_and_beats_board(&self.public_state.board, window).is_none())
         })
     }
 
@@ -481,16 +483,16 @@ impl GameState {
         let orientation = &picked_card_info.2;
 
         let hand;
-        if self.public_state.is_hero_turn {
-            if self.public_state.hero_scout_token_count == 0 {
+        if self.public_state.is_player_one_turn {
+            if self.public_state.player_one_scout_token_count == 0 {
                 return TransitionResult::IllegalMove(IllegalMoveReason::NoScoutTokens);
             }
-            hand = &mut self.hero_hidden_state.hand;
+            hand = &mut self.player_one_hidden_state.hand;
         } else {
-            if self.public_state.villian_scout_token_count == 0 {
+            if self.public_state.player_two_scout_token_count == 0 {
                 return TransitionResult::IllegalMove(IllegalMoveReason::NoScoutTokens);
             }
-            hand = &mut self.villian_hidden_state.hand;
+            hand = &mut self.player_two_hidden_state.hand;
         }
 
         if insertion_index as usize > hand.len() {
@@ -517,12 +519,12 @@ impl GameState {
                 orientation: *orientation,
             },
         );
-        if self.public_state.is_hero_turn {
-            self.public_state.hero_scout_token_count -= 1;
-            self.public_state.hero_card_count += 1;
+        if self.public_state.is_player_one_turn {
+            self.public_state.player_one_scout_token_count -= 1;
+            self.public_state.player_one_card_count += 1;
         } else {
-            self.public_state.villian_scout_token_count -= 1;
-            self.public_state.villian_card_count += 1;
+            self.public_state.player_two_scout_token_count -= 1;
+            self.public_state.player_two_card_count += 1;
         }
 
         TransitionResult::MoveAccepted
@@ -547,14 +549,18 @@ impl GameState {
         match result {
             TransitionResult::GameComplete(..) => {
                 self.public_state.game_complete = true;
-                self.public_state
-                    .action_history
-                    .push((action.clone(), result.clone()));
+                self.public_state.action_history.push((
+                    self.public_state.is_player_one_turn,
+                    action.clone(),
+                    result.clone(),
+                ));
             }
             TransitionResult::MoveAccepted => {
-                self.public_state
-                    .action_history
-                    .push((action.clone(), result.clone()));
+                self.public_state.action_history.push((
+                    self.public_state.is_player_one_turn,
+                    action.clone(),
+                    result.clone(),
+                ));
             }
             _ => {}
         }
@@ -564,10 +570,10 @@ impl GameState {
 
     pub fn display(&self) -> () {
         if !self.public_state.orientation_chosen {
-            if self.public_state.is_hero_turn {
-                println!("Hero choosing hand orientation");
+            if self.public_state.is_player_one_turn {
+                println!("player_one choosing hand orientation");
             } else {
-                println!("Villian choosing hand orientation");
+                println!("player_two choosing hand orientation");
             }
             return;
         }
@@ -576,29 +582,29 @@ impl GameState {
             println!("--Game Complete--");
         } else {
             print!("--Turn: ");
-            if self.public_state.is_hero_turn {
-                println!("Hero--");
+            if self.public_state.is_player_one_turn {
+                println!("player_one--");
             } else {
-                println!("Villian--");
+                println!("player_two--");
             }
         }
 
         print!(
-            "Hero:    [Tokens {:?}] [Hand: ",
-            self.public_state.hero_scout_token_count
+            "player_one:    [Tokens {:?}] [Hand: ",
+            self.public_state.player_one_scout_token_count
         );
-        print_cards(&self.hero_hidden_state.hand);
+        print_cards(&self.player_one_hidden_state.hand);
         print!("] [Won: ");
-        print_cards(&self.public_state.hero_won_cards);
+        print_cards(&self.public_state.player_one_won_cards);
         println!("]");
 
         print!(
-            "Villian: [Tokens {:?}] [Hand: ",
-            self.public_state.villian_scout_token_count
+            "player_two: [Tokens {:?}] [Hand: ",
+            self.public_state.player_two_scout_token_count
         );
-        print_cards(&self.villian_hidden_state.hand);
+        print_cards(&self.player_two_hidden_state.hand);
         print!("] [Won: ");
-        print_cards(&self.public_state.villian_won_cards);
+        print_cards(&self.public_state.player_two_won_cards);
         println!("]");
 
         print!("Board:  ");
@@ -672,13 +678,13 @@ mod tests {
     #[test]
     fn test_choose_orientation() {
         let mut state = GameState::new(10, 3, 2);
-        assert_eq!(true, state.public_state.is_hero_turn);
+        assert_eq!(true, state.public_state.is_player_one_turn);
         assert_eq!(false, state.public_state.orientation_chosen);
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
-        assert_eq!(false, state.public_state.is_hero_turn);
+        assert_eq!(false, state.public_state.is_player_one_turn);
         assert_eq!(false, state.public_state.orientation_chosen);
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
-        assert_eq!(true, state.public_state.is_hero_turn);
+        assert_eq!(true, state.public_state.is_player_one_turn);
         assert_eq!(true, state.public_state.orientation_chosen);
     }
     #[test]
@@ -688,29 +694,29 @@ mod tests {
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.display();
 
-        let cards_per_player = state.public_state.hero_card_count;
+        let cards_per_player = state.public_state.player_one_card_count;
 
-        assert_eq!(true, state.public_state.is_hero_turn);
+        assert_eq!(true, state.public_state.is_player_one_turn);
 
         let result = state.transition(&Action::PlayCards(0, 3));
         assert!(matches!(result, TransitionResult::IllegalMove(_)));
-        assert_eq!(true, state.public_state.is_hero_turn);
+        assert_eq!(true, state.public_state.is_player_one_turn);
 
         let result = state.transition(&Action::PlayCards(100, 0));
         assert!(matches!(result, TransitionResult::IllegalMove(_)));
-        assert_eq!(true, state.public_state.is_hero_turn);
+        assert_eq!(true, state.public_state.is_player_one_turn);
 
         let result = state.transition(&Action::PlayCards(1, 1));
         assert!(matches!(result, TransitionResult::IllegalMove(_)));
-        assert_eq!(true, state.public_state.is_hero_turn);
+        assert_eq!(true, state.public_state.is_player_one_turn);
 
         let result = state.transition(&Action::PlayCards(1, 0));
         assert!(matches!(result, TransitionResult::IllegalMove(_)));
-        assert_eq!(true, state.public_state.is_hero_turn);
+        assert_eq!(true, state.public_state.is_player_one_turn);
 
         let result = state.transition(&Action::PlayCards(cards_per_player, cards_per_player + 1));
         assert!(matches!(result, TransitionResult::IllegalMove(_)));
-        assert_eq!(true, state.public_state.is_hero_turn);
+        assert_eq!(true, state.public_state.is_player_one_turn);
     }
 
     #[test]
@@ -720,12 +726,12 @@ mod tests {
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.display();
 
-        let played = state.hero_hidden_state.hand[0..2].to_vec();
+        let played = state.player_one_hidden_state.hand[0..2].to_vec();
         let result = state.transition(&Action::PlayCards(0, 2));
         state.display();
 
         assert_eq!(TransitionResult::MoveAccepted, result);
-        assert_eq!(false, state.public_state.is_hero_turn);
+        assert_eq!(false, state.public_state.is_player_one_turn);
         assert_eq!(played, state.public_state.board);
     }
 
@@ -736,10 +742,10 @@ mod tests {
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.display();
 
-        let played = state.hero_hidden_state.hand[0..1].to_vec();
+        let played = state.player_one_hidden_state.hand[0..1].to_vec();
         let result = state.transition(&Action::PlayCards(0, 1));
         assert_eq!(TransitionResult::MoveAccepted, result);
-        assert_eq!(false, state.public_state.is_hero_turn);
+        assert_eq!(false, state.public_state.is_player_one_turn);
         assert_eq!(played, state.public_state.board);
     }
 
@@ -777,24 +783,24 @@ mod tests {
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.display();
         println!();
-        assert_eq!(2, state.hero_hidden_state.hand[0].top());
+        assert_eq!(2, state.player_one_hidden_state.hand[0].top());
 
-        // Hero plays a 2
-        let played = state.hero_hidden_state.hand[0..1].to_vec();
+        // player_one plays a 2
+        let played = state.player_one_hidden_state.hand[0..1].to_vec();
         let result = state.transition(&Action::PlayCards(0, 1));
         state.display();
         println!();
         assert_eq!(TransitionResult::MoveAccepted, result);
-        assert_eq!(false, state.public_state.is_hero_turn);
+        assert_eq!(false, state.public_state.is_player_one_turn);
         assert_eq!(played, state.public_state.board);
 
-        // Villian plays a 6
-        let played = state.villian_hidden_state.hand[0..1].to_vec();
+        // player_two plays a 6
+        let played = state.player_two_hidden_state.hand[0..1].to_vec();
         let result = state.transition(&Action::PlayCards(0, 1));
         state.display();
         println!();
         assert_eq!(TransitionResult::MoveAccepted, result);
-        assert_eq!(true, state.public_state.is_hero_turn);
+        assert_eq!(true, state.public_state.is_player_one_turn);
         assert_eq!(played, state.public_state.board);
     }
 
@@ -886,8 +892,8 @@ mod tests {
         )));
         assert_eq!(TransitionResult::MoveAccepted, result);
         assert_eq!(0, state.public_state.board.len());
-        assert_eq!(12, state.public_state.villian_card_count);
-        assert_eq!(8, state.villian_hidden_state.hand[0].top());
+        assert_eq!(12, state.public_state.player_two_card_count);
+        assert_eq!(8, state.player_two_hidden_state.hand[0].top());
     }
     #[test]
     fn test_bad_scout() {
@@ -924,7 +930,7 @@ mod tests {
             result
         );
         state.transition(&Action::PlayCards(0, 1));
-        // Villian's Turn
+        // player_two's Turn
         let result = state.transition(&Action::PlayCards(3, 6));
         state.display();
         assert_eq!(TransitionResult::MoveAccepted, result);
@@ -950,8 +956,8 @@ mod tests {
             TransitionResult::IllegalMove(IllegalMoveReason::NoScoutTokens),
             result
         );
-        assert_eq!(0, state.public_state.villian_scout_token_count);
-        assert_eq!(13, state.public_state.villian_card_count);
+        assert_eq!(0, state.public_state.player_two_scout_token_count);
+        assert_eq!(13, state.public_state.player_two_card_count);
     }
     #[test]
     fn test_illegal_move_reason() {
@@ -990,16 +996,16 @@ mod tests {
 
         state.transition(&Action::PlayCards(1, 2));
         state.display();
-        assert_eq!(true, state.public_state.is_hero_turn);
-        assert_eq!(1, state.public_state.villian_won_cards.len());
-        assert_eq!(0, state.public_state.hero_won_cards.len());
+        assert_eq!(true, state.public_state.is_player_one_turn);
+        assert_eq!(1, state.public_state.player_two_won_cards.len());
+        assert_eq!(0, state.public_state.player_one_won_cards.len());
 
         state.transition(&Action::PlayCards(3, 6));
-        assert_eq!(false, state.public_state.is_hero_turn);
+        assert_eq!(false, state.public_state.is_player_one_turn);
         state.display();
 
-        assert_eq!(1, state.public_state.villian_won_cards.len());
-        assert_eq!(1, state.public_state.hero_won_cards.len());
+        assert_eq!(1, state.public_state.player_two_won_cards.len());
+        assert_eq!(1, state.public_state.player_one_won_cards.len());
         let result = state.transition(&Action::PlayScoutToken((
             PickedCard::FirstCard,
             2,
@@ -1007,16 +1013,16 @@ mod tests {
         )));
         state.display();
         assert_eq!(TransitionResult::MoveAccepted, result);
-        assert_eq!(false, state.public_state.is_hero_turn);
-        assert_eq!(1, state.public_state.villian_won_cards.len());
-        assert_eq!(1, state.public_state.hero_won_cards.len());
+        assert_eq!(false, state.public_state.is_player_one_turn);
+        assert_eq!(1, state.public_state.player_two_won_cards.len());
+        assert_eq!(1, state.public_state.player_one_won_cards.len());
 
         let result = state.transition(&Action::PlayCards(2, 4));
         state.display();
         assert_eq!(TransitionResult::MoveAccepted, result);
-        assert_eq!(true, state.public_state.is_hero_turn);
-        assert_eq!(3, state.public_state.villian_won_cards.len());
-        assert_eq!(1, state.public_state.hero_won_cards.len());
+        assert_eq!(true, state.public_state.is_player_one_turn);
+        assert_eq!(3, state.public_state.player_two_won_cards.len());
+        assert_eq!(1, state.public_state.player_one_won_cards.len());
     }
 
     #[test]
@@ -1038,8 +1044,8 @@ mod tests {
         state.display();
         let result = state.transition(&Action::PlayCards(0, 3));
         state.display();
-        // Hero: 1 won card + 2 tokens
-        // Villian: 1 won card - 1 card in hand + 3 tokens
+        // player_one: 1 won card + 2 tokens
+        // player_two: 1 won card - 1 card in hand + 3 tokens
         assert_eq!(TransitionResult::GameComplete(3, 3), result);
     }
 
@@ -1068,20 +1074,20 @@ mod tests {
         state.transition(&Action::PlayCards(1, 3));
         state.display();
 
-        let proposed_play = state.villian_hidden_state.hand[1..3].to_vec();
-        let result = state.legal_and_beats_board(&proposed_play);
+        let proposed_play = state.player_two_hidden_state.hand[1..3].to_vec();
+        let result = legal_and_beats_board(&state.public_state.board, &proposed_play);
         assert_eq!(None, result);
 
-        let proposed_play = state.villian_hidden_state.hand[1..2].to_vec();
-        let result = state.legal_and_beats_board(&proposed_play);
+        let proposed_play = state.player_two_hidden_state.hand[1..2].to_vec();
+        let result = legal_and_beats_board(&state.public_state.board, &proposed_play);
         assert_eq!(Some(IllegalMoveReason::DoesNotBeatBoard), result);
 
-        let proposed_play = state.villian_hidden_state.hand[0..2].to_vec();
+        let proposed_play = state.player_two_hidden_state.hand[0..2].to_vec();
         print!("Proposed play: ");
         print_cards(proposed_play.as_slice());
         println!();
         assert_eq!(None, build_card_set(&proposed_play));
-        let result = state.legal_and_beats_board(&proposed_play);
+        let result = legal_and_beats_board(&state.public_state.board, &proposed_play);
         assert_eq!(Some(IllegalMoveReason::InvalidSet), result);
     }
 
@@ -1112,16 +1118,16 @@ mod tests {
             true,
         );
         state.play_and_display(&Action::PlayCards(6, 8), true);
-        let old_won = state.public_state.hero_won_cards.len();
+        let old_won = state.public_state.player_one_won_cards.len();
         state.play_and_display(&Action::PlayCards(6, 8), true);
-        let new_won = state.public_state.hero_won_cards.len();
+        let new_won = state.public_state.player_one_won_cards.len();
         assert_eq!(old_won + 2, new_won);
 
         state.play_and_display(&Action::PlayCards(4, 6), true);
         state.play_and_display(&Action::PlayCards(0, 3), true);
         let result = state.play_and_display(&Action::PlayCards(0, 4), true);
-        // Hero: 1 won card + 2 tokens
-        // Villian: 1 won card - 1 card in hand + 3 tokens
+        // player_one: 1 won card + 2 tokens
+        // player_two: 1 won card - 1 card in hand + 3 tokens
         assert_eq!(TransitionResult::GameComplete(4, 11), result);
     }
 
@@ -1146,7 +1152,7 @@ mod tests {
         assert!(matches!(result, TransitionResult::IllegalMove(..)));
         assert!(state.public_state.game_complete);
         assert!(matches!(
-            state.public_state.action_history.last().unwrap().1,
+            state.public_state.action_history.last().unwrap().2,
             TransitionResult::GameComplete(_, _)
         ));
         assert_eq!(5, state.public_state.action_history.len());

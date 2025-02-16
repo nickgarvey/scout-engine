@@ -1,4 +1,5 @@
 mod engine;
+mod players;
 
 fn main() {
     let mut state = engine::GameState::new(10, 3, 2);
