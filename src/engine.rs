@@ -184,11 +184,8 @@ pub struct PublicState {
     pub player_one_scout_token_count: u8,
     pub player_two_scout_token_count: u8,
 
-    pub player_one_won_cards: Vec<Card>,
-    pub player_two_won_cards: Vec<Card>,
-
-    pub player_one_scouted_cards: Vec<Card>,
-    pub player_two_scouted_cards: Vec<Card>,
+    pub player_one_won_cards: u8,
+    pub player_two_won_cards: u8,
 
     pub action_history: Vec<(bool, Action, TransitionResult)>,
 }
@@ -327,11 +324,8 @@ impl GameState {
             player_one_card_count: cards_per_player as u8,
             player_two_card_count: cards_per_player as u8,
 
-            player_one_won_cards: vec![],
-            player_two_won_cards: vec![],
-
-            player_one_scouted_cards: vec![],
-            player_two_scouted_cards: vec![],
+            player_one_won_cards: 0,
+            player_two_won_cards: 0,
 
             player_one_scout_token_count: scout_tokens,
             player_two_scout_token_count: scout_tokens,
@@ -402,18 +396,18 @@ impl GameState {
     fn build_game_complete(&self, player_one_scores: bool) -> TransitionResult {
         if player_one_scores {
             TransitionResult::GameComplete(
-                self.public_state.player_one_won_cards.len() as i8
+                self.public_state.player_one_won_cards as i8
                     + self.public_state.player_one_scout_token_count as i8,
-                self.public_state.player_two_won_cards.len() as i8
+                self.public_state.player_two_won_cards as i8
                     - self.public_state.player_two_card_count as i8
                     + self.public_state.player_two_scout_token_count as i8,
             )
         } else {
             TransitionResult::GameComplete(
-                self.public_state.player_one_won_cards.len() as i8
+                self.public_state.player_one_won_cards as i8
                     - self.public_state.player_one_card_count as i8
                     + self.public_state.player_one_scout_token_count as i8,
-                self.public_state.player_two_won_cards.len() as i8
+                self.public_state.player_two_won_cards as i8
                     + self.public_state.player_two_scout_token_count as i8,
             )
         }
@@ -448,7 +442,7 @@ impl GameState {
 
         if self.public_state.is_player_one_turn {
             self.public_state.player_one_card_count -= proposed_play.len() as u8;
-            self.public_state.player_one_won_cards.extend(board_cards);
+            self.public_state.player_one_won_cards += board_cards.len() as u8;
             self.public_state.board = proposed_play.to_vec();
             self.player_one_hidden_state
                 .hand
@@ -456,7 +450,7 @@ impl GameState {
             self.public_state.is_player_one_turn = false;
         } else {
             self.public_state.player_two_card_count -= proposed_play.len() as u8;
-            self.public_state.player_two_won_cards.extend(board_cards);
+            self.public_state.player_two_won_cards += board_cards.len() as u8;
             self.public_state.board = proposed_play.to_vec();
             self.player_two_hidden_state
                 .hand
@@ -610,8 +604,8 @@ impl GameState {
             self.public_state.player_one_scout_token_count
         );
         print_cards(&self.player_one_hidden_state.hand);
-        print!("] [Won: ");
-        print_cards(&self.public_state.player_one_won_cards);
+        print!("] [Won Cards: ");
+        print!("{}", self.public_state.player_one_won_cards);
         println!("]");
 
         print!(
@@ -620,7 +614,7 @@ impl GameState {
         );
         print_cards(&self.player_two_hidden_state.hand);
         print!("] [Won: ");
-        print_cards(&self.public_state.player_two_won_cards);
+        print!("{}", self.public_state.player_two_won_cards);
         println!("]");
 
         print!("Board:  ");
@@ -1013,15 +1007,15 @@ mod tests {
         state.transition(&Action::PlayCards(1, 2));
         state.display();
         assert_eq!(true, state.public_state.is_player_one_turn);
-        assert_eq!(1, state.public_state.player_two_won_cards.len());
-        assert_eq!(0, state.public_state.player_one_won_cards.len());
+        assert_eq!(1, state.public_state.player_two_won_cards);
+        assert_eq!(0, state.public_state.player_one_won_cards);
 
         state.transition(&Action::PlayCards(3, 6));
         assert_eq!(false, state.public_state.is_player_one_turn);
         state.display();
 
-        assert_eq!(1, state.public_state.player_two_won_cards.len());
-        assert_eq!(1, state.public_state.player_one_won_cards.len());
+        assert_eq!(1, state.public_state.player_two_won_cards);
+        assert_eq!(1, state.public_state.player_one_won_cards);
         let result = state.transition(&Action::PlayScoutToken((
             PickedCard::FirstCard,
             2,
@@ -1030,15 +1024,15 @@ mod tests {
         state.display();
         assert_eq!(TransitionResult::MoveAccepted, result);
         assert_eq!(false, state.public_state.is_player_one_turn);
-        assert_eq!(1, state.public_state.player_two_won_cards.len());
-        assert_eq!(1, state.public_state.player_one_won_cards.len());
+        assert_eq!(1, state.public_state.player_two_won_cards);
+        assert_eq!(1, state.public_state.player_one_won_cards);
 
         let result = state.transition(&Action::PlayCards(2, 4));
         state.display();
         assert_eq!(TransitionResult::MoveAccepted, result);
         assert_eq!(true, state.public_state.is_player_one_turn);
-        assert_eq!(3, state.public_state.player_two_won_cards.len());
-        assert_eq!(1, state.public_state.player_one_won_cards.len());
+        assert_eq!(3, state.public_state.player_two_won_cards);
+        assert_eq!(1, state.public_state.player_one_won_cards);
     }
 
     #[test]
@@ -1134,9 +1128,9 @@ mod tests {
             true,
         );
         state.play_and_display(&Action::PlayCards(6, 8), true);
-        let old_won = state.public_state.player_one_won_cards.len();
+        let old_won = state.public_state.player_one_won_cards;
         state.play_and_display(&Action::PlayCards(6, 8), true);
-        let new_won = state.public_state.player_one_won_cards.len();
+        let new_won = state.public_state.player_one_won_cards;
         assert_eq!(old_won + 2, new_won);
 
         state.play_and_display(&Action::PlayCards(4, 6), true);
