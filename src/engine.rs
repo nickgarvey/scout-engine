@@ -600,24 +600,20 @@ impl GameState {
         }
 
         print!(
-            "player_one:    [Tokens {:?}] [Hand: ",
-            self.public_state.player_one_scout_token_count
+            "Player One: [Tokens {:?}] [Won {:?}] [Hand: ",
+            self.public_state.player_one_scout_token_count, self.public_state.player_one_won_cards
         );
         print_cards(&self.player_one_hidden_state.hand);
-        print!("] [Won Cards: ");
-        print!("{}", self.public_state.player_one_won_cards);
         println!("]");
 
         print!(
-            "player_two: [Tokens {:?}] [Hand: ",
-            self.public_state.player_two_scout_token_count
+            "Player Two: [Tokens {:?}] [Won {:?}] [Hand: ",
+            self.public_state.player_two_scout_token_count, self.public_state.player_two_won_cards
         );
         print_cards(&self.player_two_hidden_state.hand);
-        print!("] [Won: ");
-        print!("{}", self.public_state.player_two_won_cards);
         println!("]");
 
-        print!("Board:  ");
+        print!("Board: ");
         for card in &self.public_state.board {
             if card != self.public_state.board.last().unwrap() {
                 print!(" {} ", card);

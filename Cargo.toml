@@ -6,3 +6,7 @@ edition = "2021"
 [dependencies]
 rand = "0.8"
 rand_xoshiro = "0.6"
+
+[profile.release]
+lto = true
+code-gen-units = 1
