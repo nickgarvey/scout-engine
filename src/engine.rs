@@ -1,10 +1,11 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::{fmt, vec};
 
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::SplitMix64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Card {
     first: u8,
     second: u8,
@@ -68,6 +69,10 @@ impl PartialOrd for CardSet {
 }
 
 fn build_deck(max_num: u8) -> Vec<Card> {
+    // e.g. 10 * 9 / 2 = 45, but -1 so it is divisible by 4 (two games with 10 cards per player)
+    // so with 3 it is: 3 * 2 / 2. but that is only 3 cards, so for two games that means each player
+    // doesn't get a card. we need at least a max_num of 4 to give each player a single card.
+    debug_assert!(max_num >= 4);
     let total_cards = max_num * (max_num - 1) / 2 - (max_num * (max_num - 1) / 2 % 4);
 
     let mut deck = Vec::with_capacity(total_cards as usize);
@@ -108,13 +113,13 @@ fn shuffle_deck(deck: &mut Vec<Card>, seed: u64) -> Vec<OrientedCard> {
         .collect()
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Orientation {
     Larger,
     Smaller,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct OrientedCard {
     card: Card,
     orientation: Orientation,
@@ -160,12 +165,12 @@ impl fmt::Display for OrientedCard {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlayerHiddenState {
     pub hand: Vec<OrientedCard>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PublicState {
     pub game_complete: bool,
     pub orientation_chosen: bool,
@@ -188,13 +193,13 @@ pub struct PublicState {
     pub action_history: Vec<(bool, Action, TransitionResult)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FlipHand {
     DoFlip,
     DoNotFlip,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PickedCard {
     // The first card as ordered on the board
     FirstCard,
@@ -202,7 +207,7 @@ pub enum PickedCard {
     LastCard,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Action {
     // false to keep current, true to flip
     ChooseOrientation(FlipHand),
@@ -212,7 +217,7 @@ pub enum Action {
     PlayScoutToken((PickedCard, u8, Orientation)),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum IllegalMoveReason {
     GameComplete,
     BadHandIndex,
@@ -223,7 +228,7 @@ pub enum IllegalMoveReason {
     ScoutWhenBoardEmpty,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TransitionResult {
     // Transition did occur, game state was updated
     MoveAccepted,
@@ -285,9 +290,9 @@ pub fn legal_and_beats_board(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GameState {
-    seed: u64,
+    pub seed: u64,
     pub public_state: PublicState,
     pub player_one_hidden_state: PlayerHiddenState,
     pub player_two_hidden_state: PlayerHiddenState,
@@ -374,6 +379,26 @@ impl GameState {
         TransitionResult::MoveAccepted
     }
 
+    fn accept_or_complete(&self) -> TransitionResult {
+        if self.public_state.player_one_card_count == 0 {
+            self.build_game_complete(true)
+        } else if self.public_state.player_two_card_count == 0 {
+            self.build_game_complete(false)
+        } else if self.public_state.is_player_one_turn
+            && self.public_state.player_one_scout_token_count == 0
+            && !self.has_legal_play(true)
+        {
+            self.build_game_complete(false)
+        } else if !self.public_state.is_player_one_turn
+            && self.public_state.player_two_scout_token_count == 0
+            && !self.has_legal_play(false)
+        {
+            self.build_game_complete(true)
+        } else {
+            TransitionResult::MoveAccepted
+        }
+    }
+
     fn build_game_complete(&self, player_one_scores: bool) -> TransitionResult {
         if player_one_scores {
             TransitionResult::GameComplete(
@@ -429,15 +454,6 @@ impl GameState {
                 .hand
                 .drain(start_idx_u..end_idx_u);
             self.public_state.is_player_one_turn = false;
-            if self.public_state.player_one_card_count == 0 {
-                self.build_game_complete(true)
-            } else if self.public_state.player_two_scout_token_count == 0
-                && !self.has_legal_play(false)
-            {
-                self.build_game_complete(true)
-            } else {
-                TransitionResult::MoveAccepted
-            }
         } else {
             self.public_state.player_two_card_count -= proposed_play.len() as u8;
             self.public_state.player_two_won_cards.extend(board_cards);
@@ -446,16 +462,9 @@ impl GameState {
                 .hand
                 .drain(start_idx_u..end_idx_u);
             self.public_state.is_player_one_turn = true;
-            if self.public_state.player_two_card_count == 0 {
-                self.build_game_complete(false)
-            } else if self.public_state.player_one_scout_token_count == 0
-                && !self.has_legal_play(true)
-            {
-                self.build_game_complete(false)
-            } else {
-                TransitionResult::MoveAccepted
-            }
         }
+
+        self.accept_or_complete()
     }
 
     fn has_legal_play(self: &Self, check_player_one: bool) -> bool {
@@ -526,8 +535,7 @@ impl GameState {
             self.public_state.player_two_scout_token_count -= 1;
             self.public_state.player_two_card_count += 1;
         }
-
-        TransitionResult::MoveAccepted
+        self.accept_or_complete()
     }
 
     pub fn transition(self: &mut Self, action: &Action) -> TransitionResult {
@@ -568,7 +576,15 @@ impl GameState {
         result
     }
 
+    pub fn calculate_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+
     pub fn display(&self) -> () {
+        let hash = self.calculate_hash();
+        println!("## State Hash: {:?}", hash);
         if !self.public_state.orientation_chosen {
             if self.public_state.is_player_one_turn {
                 println!("player_one choosing hand orientation");
@@ -1129,6 +1145,7 @@ mod tests {
         // player_one: 1 won card + 2 tokens
         // player_two: 1 won card - 1 card in hand + 3 tokens
         assert_eq!(TransitionResult::GameComplete(4, 11), result);
+        assert_eq!(true, state.public_state.game_complete);
     }
 
     #[test]
