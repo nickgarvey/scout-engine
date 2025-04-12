@@ -117,63 +117,26 @@ impl<'a> Iterator for MoveIter<'a> {
     }
 }
 
-pub struct GameNode {
-    state: GameState,
-    children: Vec<Box<GameNode>>,
-}
-
-impl GameNode {
-    pub fn new(state: GameState) -> Self {
-        GameNode {
-            state: state,
-            children: Vec::new(),
-        }
-    }
-
-    pub fn is_terminal(&self) -> bool {
-        if self.state.public_state.game_complete != self.children.is_empty() {
-            self.state.display();
-            panic!(
-                "Game state and children mismatch {:?} {:?}",
-                self.state.public_state.game_complete,
-                self.children.is_empty()
-            );
-        }
-        self.state.public_state.game_complete
-    }
-
-    pub fn num_terminal_nodes(&self) -> usize {
-        if self.is_terminal() {
-            return 1;
-        }
-        let mut count = 0;
-        for child in &self.children {
-            count += child.num_terminal_nodes();
-        }
-        count
-    }
-}
-
-pub fn tree_from_game_state(state: GameState, depth: usize) -> Box<GameNode> {
+pub fn walk_games<F>(state: GameState, walker: &mut F)
+where
+    F: FnMut(GameState),
+{
     let seed = state.seed;
-    let mut node = Box::new(GameNode::new(state));
-    if node.state.calculate_hash() == 18220208271962819626 {
-        println!("Found a node with hash 18220208271962819626");
-    }
-    if depth == 0 || node.state.public_state.game_complete {
-        return node;
+    if state.public_state.game_complete {
+        walker(state);
+        return;
     }
 
-    let hidden_state = if node.state.public_state.is_player_one_turn {
-        &node.state.player_one_hidden_state
+    let hidden_state = if state.public_state.is_player_one_turn {
+        &state.player_one_hidden_state
     } else {
-        &node.state.player_two_hidden_state
+        &state.player_two_hidden_state
     };
 
-    let mut move_iter = MoveIter::new(&node.state.public_state, hidden_state);
+    let mut move_iter = MoveIter::new(&state.public_state, hidden_state);
 
     while let Some(action) = move_iter.next() {
-        let mut new_state = node.state.clone();
+        let mut new_state = state.clone();
         match new_state.transition(&action) {
             TransitionResult::IllegalMove(reason) => {
                 panic!(
@@ -181,22 +144,11 @@ pub fn tree_from_game_state(state: GameState, depth: usize) -> Box<GameNode> {
                     reason, seed, action
                 );
             }
-            TransitionResult::GameComplete(_, _) => {
-                assert_eq!(
-                    new_state.public_state.game_complete, true,
-                    "Game should be complete after transition"
-                );
-                let child_node = tree_from_game_state(new_state, depth - 1);
-                node.children.push(child_node);
-            }
             _ => {
-                let child_node = tree_from_game_state(new_state, depth - 1);
-                node.children.push(child_node);
+                walk_games(new_state, walker);
             }
         }
     }
-
-    node
 }
 
 #[cfg(test)]
@@ -210,22 +162,30 @@ mod tests {
     }
 
     #[test]
-    fn test_tree_build_small() {
+    fn test_walker_small() {
         let state = GameState::new(4, 0, 123);
-        let tree = tree_from_game_state(state, 100);
-        let num_terminal_nodes = tree.num_terminal_nodes();
-        println!("Number of terminal nodes: {}", num_terminal_nodes);
+        let mut count = 0;
+        let mut count_fn = |state: GameState| {
+            if state.public_state.game_complete {
+                count += 1;
+            }
+        };
+        walk_games(state, &mut count_fn);
         // total games depends on the orientation each player picks. there are no choices after that.
         // so 4 games total.
-        assert_eq!(num_terminal_nodes, 4);
+        assert_eq!(count, 4);
     }
 
     #[test]
-    fn test_tree_build_medium() {
+    fn test_walker_medium() {
         let state = GameState::new(6, 1, 123);
-        let tree = tree_from_game_state(state, 100);
-        let num_terminal_nodes = tree.num_terminal_nodes();
-        println!("Number of terminal nodes: {}", num_terminal_nodes);
-        assert_eq!(num_terminal_nodes, 4);
+        let mut count = 0;
+        let mut count_fn = |state: GameState| {
+            count += 1;
+        };
+        walk_games(state, &mut count_fn);
+        // total games depends on the orientation each player picks. there are no choices after that.
+        // so 4 games total.
+        assert_eq!(count, 4040);
     }
 }
