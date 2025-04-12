@@ -10,20 +10,8 @@ impl Player for TrivialPlayer {
         public_state: &engine::PublicState,
         hidden_state: &engine::PlayerHiddenState,
     ) -> engine::Action {
-        if !public_state.orientation_chosen {
-            return engine::Action::ChooseOrientation(engine::FlipHand::DoNotFlip);
-        }
         let mut move_iter = MoveIter::new(public_state, hidden_state);
-        let card_play = move_iter.next();
-        if card_play.is_some() {
-            card_play.unwrap()
-        } else {
-            engine::Action::PlayScoutToken((
-                engine::PickedCard::FirstCard,
-                0,
-                engine::Orientation::Larger,
-            ))
-        }
+        move_iter.next().unwrap()
     }
 }
 
