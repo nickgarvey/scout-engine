@@ -36,6 +36,7 @@
             # Rust Toolchain
             pkgs.cargo
             pkgs.rustc
+            pkgs.rustfmt
             pkgs.rust-analyzer
 
             # Python environment (includes Python 3.12 + PyTorch)
