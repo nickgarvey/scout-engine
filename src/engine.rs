@@ -108,7 +108,7 @@ fn shuffle_deck(deck: &mut Vec<Card>, seed: u64) -> Vec<OrientedCard> {
         .collect()
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Orientation {
     Larger,
     Smaller,
@@ -188,13 +188,13 @@ pub struct PublicState {
     pub action_history: Vec<(bool, Action, TransitionResult)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FlipHand {
     DoFlip,
     DoNotFlip,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PickedCard {
     // The first card as ordered on the board
     FirstCard,
@@ -202,7 +202,7 @@ pub enum PickedCard {
     LastCard,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Action {
     // false to keep current, true to flip
     ChooseOrientation(FlipHand),
