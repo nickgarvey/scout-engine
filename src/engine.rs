@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::{fmt, vec};
 
@@ -7,8 +8,8 @@ use rand_xoshiro::SplitMix64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Card {
-    first: u8,
-    second: u8,
+    pub first: u8,
+    pub second: u8,
 }
 
 impl fmt::Display for Card {
@@ -68,7 +69,7 @@ impl PartialOrd for CardSet {
     }
 }
 
-fn build_deck(max_num: u8) -> Vec<Card> {
+pub fn build_deck(max_num: u8) -> Vec<Card> {
     // e.g. 10 * 9 / 2 = 45, but -1 so it is divisible by 4 (two games with 10 cards per player)
     // so with 3 it is: 3 * 2 / 2. but that is only 3 cards, so for two games that means each player
     // doesn't get a card. we need at least a max_num of 4 to give each player a single card.
@@ -121,8 +122,8 @@ pub enum Orientation {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct OrientedCard {
-    card: Card,
-    orientation: Orientation,
+    pub card: Card,
+    pub orientation: Orientation,
 }
 
 impl OrientedCard {
@@ -289,14 +290,47 @@ pub fn legal_and_beats_board(
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GameState {
-    pub seed: u64,
     pub public_state: PublicState,
     pub player_one_hidden_state: PlayerHiddenState,
     pub player_two_hidden_state: PlayerHiddenState,
 }
 
 impl GameState {
-    pub fn new(max_card_num: u8, scout_tokens: u8, seed: u64) -> Self {
+    pub fn new_from_hands(player_one_hand: &[OrientedCard], player_two_hand: &[OrientedCard], scout_tokens: u8) -> Self {
+        let player_one_hidden_state = PlayerHiddenState {
+            hand: player_one_hand.to_vec(),
+        };
+        let player_two_hidden_state = PlayerHiddenState {
+            hand: player_two_hand.to_vec(),
+        };
+
+        debug_assert_eq!(player_one_hidden_state.hand.len(), player_two_hidden_state.hand.len(), "Expected same card counts for both players");
+
+        let public_state = PublicState {
+            game_complete: false,
+            orientation_chosen: false,
+            is_player_one_turn: true,
+            board: vec![],
+            player_one_card_count: player_one_hidden_state.hand.len() as u8,
+            player_two_card_count: player_two_hidden_state.hand.len() as u8,
+
+            player_one_won_cards: 0,
+            player_two_won_cards: 0,
+
+            player_one_scout_token_count: scout_tokens,
+            player_two_scout_token_count: scout_tokens,
+
+            action_history: vec![],
+        };
+
+        GameState {
+            public_state,
+            player_one_hidden_state,
+            player_two_hidden_state,
+        }
+    }
+
+    pub fn new_from_seed(max_card_num: u8, scout_tokens: u8, seed: u64) -> Self {
         // If max_card_num is too high then u8 could overflow
         // 40 is an abritrary limit, the game itself plays up to 10
         debug_assert!(max_card_num < 40);
@@ -334,7 +368,6 @@ impl GameState {
         };
 
         GameState {
-            seed,
             public_state,
             player_one_hidden_state,
             player_two_hidden_state,
@@ -683,7 +716,7 @@ mod tests {
 
     #[test]
     fn test_choose_orientation() {
-        let mut state = GameState::new(10, 3, 2);
+        let mut state = GameState::new_from_seed(10, 3, 2);
         assert_eq!(true, state.public_state.is_player_one_turn);
         assert_eq!(false, state.public_state.orientation_chosen);
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
@@ -695,7 +728,7 @@ mod tests {
     }
     #[test]
     fn test_play_illegal_cards() {
-        let mut state = GameState::new(10, 3, 2);
+        let mut state = GameState::new_from_seed(10, 3, 2);
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.display();
@@ -727,7 +760,7 @@ mod tests {
 
     #[test]
     fn test_play_same_pair() {
-        let mut state = GameState::new(10, 3, 2);
+        let mut state = GameState::new_from_seed(10, 3, 2);
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.display();
@@ -743,7 +776,7 @@ mod tests {
 
     #[test]
     fn test_play_single() {
-        let mut state = GameState::new(10, 3, 2);
+        let mut state = GameState::new_from_seed(10, 3, 2);
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.display();
@@ -784,7 +817,7 @@ mod tests {
 
     #[test]
     fn test_both_players_act() {
-        let mut state = GameState::new(10, 3, 2);
+        let mut state = GameState::new_from_seed(10, 3, 2);
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.display();
@@ -860,7 +893,7 @@ mod tests {
 
     #[test]
     fn test_no_orient() {
-        let mut state = GameState::new(10, 3, 2);
+        let mut state = GameState::new_from_seed(10, 3, 2);
         let result = state.transition(&Action::PlayCards(0, 1));
         assert_eq!(
             TransitionResult::IllegalMove(IllegalMoveReason::MustChooseOrientation),
@@ -881,7 +914,7 @@ mod tests {
 
     #[test]
     fn test_scout() {
-        let mut state = GameState::new(10, 3, 2);
+        let mut state = GameState::new_from_seed(10, 3, 2);
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.display();
@@ -903,7 +936,7 @@ mod tests {
     }
     #[test]
     fn test_bad_scout() {
-        let mut state = GameState::new(10, 3, 2);
+        let mut state = GameState::new_from_seed(10, 3, 2);
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.display();
@@ -967,7 +1000,7 @@ mod tests {
     }
     #[test]
     fn test_illegal_move_reason() {
-        let mut state = GameState::new(10, 3, 3);
+        let mut state = GameState::new_from_seed(10, 3, 3);
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.display();
@@ -992,7 +1025,7 @@ mod tests {
 
     #[test]
     fn test_won_cards() {
-        let mut state = GameState::new(10, 3, 3);
+        let mut state = GameState::new_from_seed(10, 3, 3);
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.display();
@@ -1033,7 +1066,7 @@ mod tests {
 
     #[test]
     fn test_game_end() {
-        let mut state = GameState::new(6, 3, 3);
+        let mut state = GameState::new_from_seed(6, 3, 3);
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.display();
@@ -1057,7 +1090,7 @@ mod tests {
 
     #[test]
     fn test_has_legal_play() {
-        let mut state = GameState::new(6, 0, 3);
+        let mut state = GameState::new_from_seed(6, 0, 3);
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.display();
@@ -1073,7 +1106,7 @@ mod tests {
 
     #[test]
     fn test_legal_and_beats_board() {
-        let mut state = GameState::new(6, 0, 3);
+        let mut state = GameState::new_from_seed(6, 0, 3);
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.display();
@@ -1099,7 +1132,7 @@ mod tests {
 
     #[test]
     fn test_game_end2() {
-        let mut state = GameState::new(10, 3, 1234);
+        let mut state = GameState::new_from_seed(10, 3, 1234);
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.display();
@@ -1140,7 +1173,7 @@ mod tests {
 
     #[test]
     fn test_cant_play_past_end() {
-        let mut state = GameState::new(6, 0, 5);
+        let mut state = GameState::new_from_seed(6, 0, 5);
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.display();

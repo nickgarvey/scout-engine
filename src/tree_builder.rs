@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::engine::{
     legal_and_beats_board, Action, FlipHand, GameState, Orientation, PickedCard, TransitionResult,
 };
@@ -147,7 +148,7 @@ mod tests {
     // --- Tests for enumerate_legal_actions ---
     #[test]
     fn test_enumerate_orientation() {
-        let state = GameState::new(10, 3, 1);
+        let state = GameState::new_from_seed(10, 3, 1);
         let actions = enumerate_legal_actions(&state);
         assert_eq!(actions.len(), 2);
         assert!(actions.contains(&Action::ChooseOrientation(FlipHand::DoFlip)));
@@ -156,7 +157,7 @@ mod tests {
 
     #[test]
     fn test_enumerate_initial_play() {
-        let mut state = GameState::new(10, 3, 1);
+        let mut state = GameState::new_from_seed(10, 3, 1);
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip)); // Now player 1's turn, orientation chosen
 
@@ -175,7 +176,7 @@ mod tests {
 
      #[test]
     fn test_enumerate_with_board_and_scout() {
-        let mut state = GameState::new(10, 3, 1);
+        let mut state = GameState::new_from_seed(10, 3, 1);
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         // Player 1 plays a card
@@ -225,7 +226,7 @@ mod tests {
 
      #[test]
     fn test_enumerate_no_scout_tokens() {
-        let mut state = GameState::new(10, 0, 1); // 0 scout tokens
+        let mut state = GameState::new_from_seed(10, 0, 1); // 0 scout tokens
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.transition(&Action::PlayCards(0, 1)); // Player 1 plays
@@ -239,7 +240,7 @@ mod tests {
 
      #[test]
     fn test_enumerate_game_complete() {
-        let mut state = GameState::new(6, 0, 5); // Use a game that ends quickly
+        let mut state = GameState::new_from_seed(6, 0, 5); // Use a game that ends quickly
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.transition(&Action::PlayCards(2, 3));
@@ -258,7 +259,7 @@ mod tests {
     #[test]
     fn test_build_tree_orientation_phase() {
         // Use small parameters for manageable tree size in tests
-        let initial_state = GameState::new(6, 3, 3);
+        let initial_state = GameState::new_from_seed(6, 3, 3);
         // We don't build the full tree here, just check the initial steps.
         // The build_game_tree function itself is recursive.
         let tree = build_game_tree(initial_state.clone(), 3); // Clone initial state for checks
@@ -302,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_build_tree_play_phase_root() { // Renamed to clarify scope
-        let initial_state = GameState::new(6, 3, 3);
+        let initial_state = GameState::new_from_seed(6, 3, 3);
 
         let tree = build_game_tree(initial_state.clone(), 2); // Clone initial state for checks
 
@@ -330,7 +331,7 @@ mod tests {
 
      #[test]
     fn test_build_tree_game_end_node() {
-        let mut state = GameState::new(6, 0, 5); // Use game that ends quickly
+        let mut state = GameState::new_from_seed(6, 0, 5); // Use game that ends quickly
         state.transition(&Action::ChooseOrientation(FlipHand::DoFlip));
         state.transition(&Action::ChooseOrientation(FlipHand::DoNotFlip));
         state.transition(&Action::PlayCards(2, 3));
@@ -352,7 +353,7 @@ mod tests {
     #[test]
     fn test_count_nodes_simple() {
         // Build a small tree (depth 2: P1 orient, P2 orient)
-        let initial_state = GameState::new(6, 0, 5);
+        let initial_state = GameState::new_from_seed(6, 0, 5);
         let tree = build_game_tree(initial_state, 2);
 
         // Expected nodes:
@@ -367,7 +368,7 @@ mod tests {
     #[test]
     fn test_count_nodes_deeper() {
          // Build a slightly deeper tree (depth 3: P1 orient, P2 orient, P1 play)
-        let initial_state = GameState::new(6, 0, 5);
+        let initial_state = GameState::new_from_seed(6, 0, 5);
         initial_state.display(); 
 
         let tree = build_game_tree(initial_state, 3);

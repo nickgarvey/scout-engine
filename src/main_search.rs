@@ -11,7 +11,7 @@ fn main() {
     let num_scout = args[2].parse::<u8>().unwrap();
     let seed = args[3].parse::<u64>().unwrap();
 
-    let state = engine::GameState::new(num_cards, num_scout, seed);
+    let state = engine::GameState::new_from_seed(num_cards, num_scout, seed);
     let mut count = 0;
     let mut count_fn = |_: engine::GameState| {
         count += 1;
