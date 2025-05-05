@@ -1,9 +1,11 @@
+#![allow(dead_code)]
 use crate::engine::{self};
 use crate::players::player::Player;
 use crate::search::MoveIter;
 
 
 struct TrivialPlayer {}
+
 impl Player for TrivialPlayer {
     fn choose_action(
         &self,
@@ -21,7 +23,7 @@ mod tests {
 
     #[test]
     fn test_choose_action() {
-        let mut state = engine::GameState::new(10, 3, 123);
+        let mut state = engine::GameState::new_from_seed(10, 3, 123);
         let trivial_player_1 = TrivialPlayer {};
         let trivial_player_2 = TrivialPlayer {};
         while !state.public_state.game_complete {

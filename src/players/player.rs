@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::engine::{self};
 
 pub trait Player {
@@ -7,7 +8,3 @@ pub trait Player {
         hidden_state: &engine::PlayerHiddenState,
     ) -> engine::Action;
 }
-
-// add tests
-#[cfg(test)]
-mod tests {}
